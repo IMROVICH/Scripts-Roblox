@@ -1,0 +1,617 @@
+--[[
+	Эффект Меню
+	Открывается/закрывается на клавишу P
+	Один скрипт — вся логика UI и эффектов
+]]
+
+--// Сервисы
+local Players = game:GetService("Players")
+local Lighting = game:GetService("Lighting")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+
+--// Константы
+local TOGGLE_KEY = Enum.KeyCode.P
+local MENU_WIDTH = 520
+local MENU_HEIGHT = 400
+local CORNER_RADIUS = 12
+local STROKE_THICKNESS = 1.8
+local ANIM_TIME = 0.3
+local ANIM_TIME_SLOW = 0.4
+
+--// Цвета
+local COLOR_BG = Color3.fromRGB(25, 25, 30)
+local COLOR_BG_ITEM = Color3.fromRGB(38, 38, 45)
+local COLOR_BG_ITEM_HOVER = Color3.fromRGB(48, 48, 56)
+local COLOR_STROKE = Color3.fromRGB(62, 62, 62)
+local COLOR_TEXT = Color3.fromRGB(240, 240, 245)
+local COLOR_TEXT_DIM = Color3.fromRGB(150, 150, 160)
+local COLOR_ACCENT = Color3.fromRGB(90, 160, 255)
+local COLOR_TOGGLE_OFF = Color3.fromRGB(60, 60, 70)
+local COLOR_TOGGLE_ON = Color3.fromRGB(127, 0, 255)
+local COLOR_CATEGORY_ACTIVE = Color3.fromRGB(127, 0, 255)
+local COLOR_CATEGORY_INACTIVE = Color3.fromRGB(30, 30, 36)
+
+--// Состояние
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+local menuOpen = false
+local currentCategory = nil
+
+--// Пост-процессинг эффекты (создаются ДО таблицы категорий, чтобы замыкания видели их)
+local screenBlur = Instance.new("BlurEffect")
+screenBlur.Name = "EffectMenuBlur"
+screenBlur.Size = 0
+screenBlur.Enabled = false
+screenBlur.Parent = Lighting
+
+local colorCorrection = Instance.new("ColorCorrectionEffect")
+colorCorrection.Name = "EffectMenuCC"
+colorCorrection.Contrast = 0
+colorCorrection.Saturation = 0
+colorCorrection.Brightness = 0
+colorCorrection.TintColor = Color3.fromRGB(255, 255, 255)
+colorCorrection.Parent = Lighting
+
+local bloomEffect = Instance.new("BloomEffect")
+bloomEffect.Name = "EffectMenuBloom"
+bloomEffect.Intensity = 0
+bloomEffect.Size = 24
+bloomEffect.Threshold = 0.95
+bloomEffect.Parent = Lighting
+
+-- Категории и их эффекты
+local categories = {
+	{
+		name = "Visuals",
+		effects = {
+			{name = "Яркость как от Исуса", enabled = false, apply = function(on) Lighting.Brightness = on and 70 or 3 end},
+			{name = "Контраст", enabled = false, apply = function(on) colorCorrection.Contrast = on and 0.25 or 0 end},
+			{name = "Холодный оттенок", enabled = false, apply = function(on) Lighting.Ambient = on and Color3.fromRGB(170, 198, 255) or Color3.fromRGB(70, 70, 70) end},
+			{name = "Тёмный оттенок", enabled = false, apply = function(on) Lighting.Ambient = on and Color3.fromRGB(100, 100, 100) or Color3.fromRGB(70, 70, 70) end},
+			{name = "Размытие", enabled = false, apply = function(on) screenBlur.Size = on and 10 or 0; screenBlur.Enabled = on end},
+			{name = "Шейдер экрана", enabled = false, apply = function(on) colorCorrection.TintColor = on and Color3.fromRGB(200, 200, 255) or Color3.fromRGB(255, 255, 255) end},
+			{name = "Насыщенность", enabled = false, apply = function(on) colorCorrection.Saturation = on and 0.5 or 0 end},
+			{name = "Лёгкий BLOOM", enabled = false, apply = function(on) bloomEffect.Intensity = on and 0.8 or 0 end},
+		},
+	},
+	{
+		name = "Optimization",
+		effects = {
+			{name = "Тени", enabled = false, apply = function(on) Lighting.GlobalShadows = on end},
+		},
+	},
+	{
+		name = "Экран",
+		effects = {
+
+		},
+	},
+	{
+		name = "Player",
+		effects = {
+			{name = "Скорость x1.5", enabled = false, apply = function(on)
+				local char = player.Character
+				if char then
+					local hum = char:FindFirstChildOfClass("Humanoid")
+					if hum then
+						hum.WalkSpeed = on and 24 or 16
+					end
+				end
+			end},
+			{name = "Супер прыжок", enabled = false, apply = function(on)
+				local char = player.Character
+				if char then
+					local hum = char:FindFirstChildOfClass("Humanoid")
+					if hum then
+						hum.JumpPower = on and 80 or 50
+					end
+				end
+			end},
+			{name = "Прыжки в воздухе", enabled = false, apply = function(on)
+				local char = player.Character
+				if char then
+					local hum = char:FindFirstChildOfClass("Humanoid")
+					if hum then
+						hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, on)
+					end
+				end
+			end},
+			{name = "Низкая гравитация", enabled = false, apply = function(on)
+				local char = player.Character
+				if char then
+					local hum = char:FindFirstChildOfClass("Humanoid")
+					if hum then
+						hum.UseJumpPower = true
+						hum.JumpHeight = on and 10 or 7.2
+					end
+				end
+			end},
+		},
+	},
+	{
+		name = "???",
+		effects = {},
+	},
+	{
+		name = "???",
+		effects = {},
+	},
+}
+
+--// --- Создание UI ---
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "EffectMenu"
+screenGui.ResetOnSpawn = false
+screenGui.IgnoreGuiInset = true
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.Parent = playerGui
+
+--// Тёмный фон при открытом меню
+local darkOverlay = Instance.new("Frame")
+darkOverlay.Name = "DarkOverlay"
+darkOverlay.Size = UDim2.fromScale(10, 10)
+darkOverlay.Position = UDim2.fromScale(0, 0)
+darkOverlay.BackgroundColor3 = Color3.fromRGB(63, 73, 100)
+darkOverlay.BackgroundTransparency = 1
+darkOverlay.ZIndex = 1
+darkOverlay.Parent = screenGui
+
+-- Размытие фона при открытом меню (отдельное от эффекта экрана)
+local menuBlur = Instance.new("BlurEffect")
+menuBlur.Name = "MenuOpenBlur"
+menuBlur.Size = 0
+menuBlur.Enabled = false
+menuBlur.Parent = Lighting
+
+-- Главное меню
+local menuFrame = Instance.new("Frame")
+menuFrame.Name = "MenuFrame"
+menuFrame.Size = UDim2.fromOffset(MENU_WIDTH, MENU_HEIGHT)
+menuFrame.Position = UDim2.new(0.5, 0, 0.5, -35)
+menuFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+menuFrame.BackgroundColor3 = COLOR_BG
+menuFrame.BackgroundTransparency = 0.99
+menuFrame.ZIndex = 2
+menuFrame.Visible = false
+menuFrame.ClipsDescendants = true
+menuFrame.Parent = screenGui
+
+local menuCorner = Instance.new("UICorner")
+menuCorner.CornerRadius = UDim.new(0, CORNER_RADIUS)
+menuCorner.Parent = menuFrame
+
+local menuStroke = Instance.new("UIStroke")
+menuStroke.Color = COLOR_STROKE
+menuStroke.Thickness = STROKE_THICKNESS
+menuStroke.Transparency = 0
+menuStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+menuStroke.Parent = menuFrame
+
+-- Заголовок
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Name = "Title"
+titleLabel.Size = UDim2.new(1, -30, 0, 50)
+titleLabel.Position = UDim2.fromOffset(20, 10)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "Visuals"
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.TextSize = 22
+titleLabel.TextColor3 = COLOR_TEXT
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.TextYAlignment = Enum.TextYAlignment.Center
+titleLabel.ZIndex = 2
+titleLabel.Parent = menuFrame
+
+-- Линия под заголовком
+local titleLine = Instance.new("Frame")
+titleLine.Name = "TitleLine"
+titleLine.Size = UDim2.new(1, -30, 0, 1)
+titleLine.Position = UDim2.fromOffset(15, 58)
+titleLine.BackgroundColor3 = COLOR_STROKE
+titleLine.BackgroundTransparency = 0.3
+titleLine.ZIndex = 2
+titleLine.Parent = menuFrame
+
+local titleLineCorner = Instance.new("UICorner")
+titleLineCorner.CornerRadius = UDim.new(1, 0)
+titleLineCorner.Parent = titleLine
+
+-- Контейнер эффектов (скролл-зона)
+local effectsContainer = Instance.new("ScrollingFrame")
+effectsContainer.Name = "EffectsContainer"
+effectsContainer.Size = UDim2.new(1, -20, 1, -80)
+effectsContainer.Position = UDim2.fromOffset(10, 68)
+effectsContainer.BackgroundTransparency = 1
+effectsContainer.ScrollBarThickness = 3
+effectsContainer.ScrollBarImageColor3 = COLOR_STROKE
+effectsContainer.CanvasSize = UDim2.new(0, 0, 0, 0)
+effectsContainer.AutomaticCanvasSize = Enum.AutomaticSize.Y
+effectsContainer.ScrollingDirection = Enum.ScrollingDirection.Y
+effectsContainer.ZIndex = 2
+effectsContainer.Parent = menuFrame
+
+local effectsLayout = Instance.new("UIListLayout")
+effectsLayout.Padding = UDim.new(0, 8)
+effectsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+effectsLayout.Parent = effectsContainer
+
+-- Отдельная панель с категориями (вне меню, под ним)
+local categoryBar = Instance.new("ScrollingFrame")
+categoryBar.Name = "CategoryBar"
+categoryBar.Size = UDim2.fromOffset(MENU_WIDTH, 50)
+categoryBar.Position = UDim2.new(0.5, 0, 0.5, 175)
+categoryBar.AnchorPoint = Vector2.new(0.5, 0)
+categoryBar.BackgroundColor3 = COLOR_BG
+categoryBar.BackgroundTransparency = 0.99
+categoryBar.ZIndex = 2
+categoryBar.Visible = false
+categoryBar.ScrollBarThickness = 3
+categoryBar.ScrollBarImageColor3 = COLOR_STROKE
+categoryBar.CanvasSize = UDim2.new(0, 0, 0, 0)
+categoryBar.AutomaticCanvasSize = Enum.AutomaticSize.X
+categoryBar.ScrollingDirection = Enum.ScrollingDirection.X
+categoryBar.Parent = screenGui
+
+local catBarCorner = Instance.new("UICorner")
+catBarCorner.CornerRadius = UDim.new(0, CORNER_RADIUS)
+catBarCorner.Parent = categoryBar
+
+local catBarStroke = Instance.new("UIStroke")
+catBarStroke.Color = COLOR_STROKE
+catBarStroke.Thickness = STROKE_THICKNESS
+catBarStroke.Transparency = 0
+catBarStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+catBarStroke.Parent = categoryBar
+
+local catBarPadding = Instance.new("UIPadding")
+catBarPadding.PaddingLeft = UDim.new(0, 10)
+catBarPadding.PaddingRight = UDim.new(0, 10)
+catBarPadding.PaddingTop = UDim.new(0, 4)
+catBarPadding.PaddingBottom = UDim.new(0, 4)
+catBarPadding.Parent = categoryBar
+
+local categoryLayout = Instance.new("UIListLayout")
+categoryLayout.FillDirection = Enum.FillDirection.Horizontal
+categoryLayout.Padding = UDim.new(0, 8)
+categoryLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+categoryLayout.HorizontalAlignment = Enum.HorizontalAlignment.Left
+categoryLayout.Parent = categoryBar
+
+-- Хранилище ссылок
+categoryButtons = {}
+effectItems = {}
+
+-- Функция создания тоггла
+local function createToggle(parent, effectData)
+	local toggleFrame = Instance.new("Frame")
+	toggleFrame.Name = "Toggle"
+	toggleFrame.Size = UDim2.fromOffset(46, 24)
+	toggleFrame.Position = UDim2.new(1, -56, 0.5, -12)
+	toggleFrame.BackgroundColor3 = effectData.enabled and COLOR_TOGGLE_ON or COLOR_TOGGLE_OFF
+	toggleFrame.ZIndex = 3
+	toggleFrame.Parent = parent
+	
+	local toggleCorner = Instance.new("UICorner")
+	toggleCorner.CornerRadius = UDim.new(1, 0)
+	toggleCorner.Parent = toggleFrame
+	
+	local toggleKnob = Instance.new("Frame")
+	toggleKnob.Name = "Knob"
+	toggleKnob.Size = UDim2.fromOffset(18, 18)
+	toggleKnob.Position = effectData.enabled and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
+	toggleKnob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+	toggleKnob.ZIndex = 4
+	toggleKnob.Parent = toggleFrame
+	
+	local knobCorner = Instance.new("UICorner")
+	knobCorner.CornerRadius = UDim.new(1, 0)
+	knobCorner.Parent = toggleKnob
+	
+	return toggleFrame, toggleKnob
+end
+
+-- Функция создания карточки эффекта
+local function createEffectItem(effectData)
+	local item = Instance.new("Frame")
+	item.Name = effectData.name
+	item.Size = UDim2.new(1, 0, 0, 56)
+	item.BackgroundColor3 = COLOR_BG_ITEM
+	item.ZIndex = 3
+	item.Parent = effectsContainer
+	
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 8)
+	corner.Parent = item
+	
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = COLOR_STROKE
+	stroke.Thickness = 1
+	stroke.Transparency = 0.3
+	stroke.Parent = item
+	
+	local nameLabel = Instance.new("TextLabel")
+	nameLabel.Size = UDim2.new(1, -70, 1, 0)
+	nameLabel.Position = UDim2.fromOffset(15, 0)
+	nameLabel.BackgroundTransparency = 1
+	nameLabel.Text = effectData.name
+	nameLabel.Font = Enum.Font.GothamMedium
+	nameLabel.TextSize = 17
+	nameLabel.TextColor3 = COLOR_TEXT
+	nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+	nameLabel.ZIndex = 4
+	nameLabel.Parent = item
+	
+	local toggleBg, knob = createToggle(item, effectData)
+	
+	local function updateToggle()
+		TweenService:Create(toggleBg, TweenInfo.new(ANIM_TIME), {
+			BackgroundColor3 = effectData.enabled and COLOR_TOGGLE_ON or COLOR_TOGGLE_OFF
+		}):Play()
+		TweenService:Create(knob, TweenInfo.new(ANIM_TIME), {
+			Position = effectData.enabled and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
+		}):Play()
+	end
+	
+	-- Клик по карточке = переключение
+	local button = Instance.new("TextButton")
+	button.Size = UDim2.fromScale(1, 1)
+	button.BackgroundTransparency = 1
+	button.Text = ""
+	button.ZIndex = 5
+	button.Parent = item
+	
+	button.MouseButton1Click:Connect(function()
+		effectData.enabled = not effectData.enabled
+		updateToggle()
+		if effectData.apply then
+			effectData.apply(effectData.enabled)
+		end
+	end)
+	
+	-- Hover
+	button.MouseEnter:Connect(function()
+		TweenService:Create(item, TweenInfo.new(ANIM_TIME), {
+			BackgroundColor3 = COLOR_BG_ITEM_HOVER
+		}):Play()
+	end)
+	button.MouseLeave:Connect(function()
+		TweenService:Create(item, TweenInfo.new(ANIM_TIME), {
+			BackgroundColor3 = COLOR_BG_ITEM
+		}):Play()
+	end)
+	
+	effectData._updateToggle = updateToggle
+	return item
+end
+
+-- Отрисовка эффектов для категории
+local function showCategory(catIndex)
+	-- Очищаем старые элементы
+	for _, child in ipairs(effectsContainer:GetChildren()) do
+		if child:IsA("Frame") then
+			child:Destroy()
+		end
+	end
+	
+	currentCategory = catIndex
+	local cat = categories[catIndex]
+	
+	-- Обновляем кнопки категорий
+	for i, btnInfo in ipairs(categoryButtons) do
+		TweenService:Create(btnInfo.frame, TweenInfo.new(ANIM_TIME), {
+			BackgroundColor3 = (i == catIndex) and COLOR_CATEGORY_ACTIVE or COLOR_CATEGORY_INACTIVE
+		}):Play()
+		TweenService:Create(btnInfo.label, TweenInfo.new(ANIM_TIME), {
+			TextColor3 = (i == catIndex) and COLOR_TEXT or COLOR_TEXT_DIM
+		}):Play()
+	end
+	
+	-- Создаём элементы
+	for _, effect in ipairs(cat.effects) do
+		createEffectItem(effect)
+	end
+end
+
+-- Создание кнопок категорий
+for i, cat in ipairs(categories) do
+	local btnFrame = Instance.new("Frame")
+	btnFrame.Name = cat.name
+	btnFrame.Size = UDim2.new(0, 110, 0, 34)
+	btnFrame.BackgroundColor3 = (i == 1) and COLOR_CATEGORY_ACTIVE or COLOR_CATEGORY_INACTIVE
+	btnFrame.ZIndex = 3
+	btnFrame.Parent = categoryBar
+	
+	local btnCorner = Instance.new("UICorner")
+	btnCorner.CornerRadius = UDim.new(0, 8)
+	btnCorner.Parent = btnFrame
+	
+	local btnStroke = Instance.new("UIStroke")
+	btnStroke.Color = COLOR_STROKE
+	btnStroke.Thickness = 1
+	btnStroke.Transparency = 0.3
+	btnStroke.Parent = btnFrame
+	
+	local btnLabel = Instance.new("TextLabel")
+	btnLabel.Size = UDim2.fromScale(1, 1)
+	btnLabel.BackgroundTransparency = 1
+	btnLabel.Text = cat.name
+	btnLabel.Font = Enum.Font.GothamMedium
+	btnLabel.TextSize = 15
+	btnLabel.TextColor3 = (i == 1) and COLOR_TEXT or COLOR_TEXT_DIM
+	btnLabel.ZIndex = 4
+	btnLabel.Parent = btnFrame
+	
+	local clickBtn = Instance.new("TextButton")
+	clickBtn.Size = UDim2.fromScale(1, 1)
+	clickBtn.BackgroundTransparency = 1
+	clickBtn.Text = ""
+	clickBtn.ZIndex = 5
+	clickBtn.Parent = btnFrame
+	
+	clickBtn.MouseButton1Click:Connect(function()
+		showCategory(i)
+	end)
+	
+	clickBtn.MouseEnter:Connect(function()
+		if currentCategory ~= i then
+			TweenService:Create(btnFrame, TweenInfo.new(ANIM_TIME), {
+				BackgroundColor3 = COLOR_BG_ITEM_HOVER
+			}):Play()
+		end
+	end)
+	clickBtn.MouseLeave:Connect(function()
+		if currentCategory ~= i then
+			TweenService:Create(btnFrame, TweenInfo.new(ANIM_TIME), {
+				BackgroundColor3 = COLOR_CATEGORY_INACTIVE
+			}):Play()
+		end
+	end)
+	
+	table.insert(categoryButtons, {frame = btnFrame, label = btnLabel, button = clickBtn, stroke = btnStroke})
+end
+
+-- Плавное появление/исчезновение кнопок категорий
+local function animateCategoryButtons(appearing)
+	for i, btnInfo in ipairs(categoryButtons) do
+		if appearing then
+			-- Начальное состояние: полностью прозрачные
+			btnInfo.frame.BackgroundTransparency = 1
+			btnInfo.label.TextTransparency = 1
+			btnInfo.stroke.Transparency = 1
+			-- Staggered fade-in (кастомный порядок: Атмосфера, Визуал, Геймплей, Экран)
+			local fadeDelays = {0.38,0.38,0.38,0.38,0.38,0.38,0.38,0.38,0.38,0.38,0.38,0.38}
+			task.delay(fadeDelays[i] or 0, function()
+				TweenService:Create(btnInfo.frame, TweenInfo.new(0.3, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+					BackgroundTransparency = 0
+				}):Play()
+				TweenService:Create(btnInfo.label, TweenInfo.new(0.3, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+					TextTransparency = 0
+				}):Play()
+				TweenService:Create(btnInfo.stroke, TweenInfo.new(0.3, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+					Transparency = 0.3
+				}):Play()
+			end)
+		else
+			-- Одновременное исчезновение всех кнопок
+			TweenService:Create(btnInfo.frame, TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {
+				BackgroundTransparency = 1
+			}):Play()
+			TweenService:Create(btnInfo.label, TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {
+				TextTransparency = 1
+			}):Play()
+			TweenService:Create(btnInfo.stroke, TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {
+				Transparency = 1
+			}):Play()
+		end
+	end
+end
+
+-- Анимация открытия/закрытия
+local function toggleMenu()
+	menuOpen = not menuOpen
+	
+	if menuOpen then
+		-- Включаем элементы
+		menuFrame.Visible = true
+		menuBlur.Enabled = true
+		
+		-- Начальное состояние меню (сжатое, прозрачное, чуть ниже)
+		menuFrame.Size = UDim2.fromOffset(MENU_WIDTH, 0)
+		menuFrame.BackgroundTransparency = 1
+		menuFrame.Position = UDim2.new(0.5, 0, 0.5, -20)
+		menuStroke.Transparency = 1
+		
+		-- Начальное состояние панели категорий (скрыта)
+		categoryBar.Visible = false
+		
+		-- Затемнение фона (плавно, 0.4s)
+		TweenService:Create(darkOverlay, TweenInfo.new(ANIM_TIME_SLOW, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+			BackgroundTransparency = 0.5
+		}):Play()
+		
+		-- Размытие фона (плавно, 0.4s)
+		TweenService:Create(menuBlur, TweenInfo.new(ANIM_TIME_SLOW, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+			Size = 12
+		}):Play()
+		
+		-- Появление меню: рост высоты + сдвиг вверх + проявление (0.35s, Quint Out)
+		TweenService:Create(menuFrame, TweenInfo.new(ANIM_TIME, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+			Size = UDim2.fromOffset(MENU_WIDTH, MENU_HEIGHT),
+			BackgroundTransparency = 0.05,
+			Position = UDim2.new(0.5, 0, 0.5, -35)
+		}):Play()
+		TweenService:Create(menuStroke, TweenInfo.new(ANIM_TIME, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+			Transparency = 0
+		}):Play()
+		
+		-- Появление панели категорий с задержкой (fade-in + лёгкое увеличение, без движения снизу)
+		task.delay(0.12, function()
+			categoryBar.Visible = true
+			categoryBar.Size = UDim2.fromOffset(MENU_WIDTH - 40, 50)
+			categoryBar.BackgroundTransparency = 1
+			catBarStroke.Transparency = 1
+			
+			TweenService:Create(categoryBar, TweenInfo.new(ANIM_TIME, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+				Size = UDim2.fromOffset(MENU_WIDTH, 50),
+				BackgroundTransparency = 0.05
+			}):Play()
+			TweenService:Create(catBarStroke, TweenInfo.new(ANIM_TIME, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+				Transparency = 0
+			}):Play()
+			-- Плавное появление кнопок по очереди
+			animateCategoryButtons(true)
+		end)
+	else
+		-- Плавное исчезновение кнопок
+		animateCategoryButtons(false)
+		
+		-- Скрытие панели категорий (fade-out + лёгкое уменьшение, 0.25s)
+		TweenService:Create(categoryBar, TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {
+			Size = UDim2.fromOffset(MENU_WIDTH - 40, 50),
+			BackgroundTransparency = 1
+		}):Play()
+		TweenService:Create(catBarStroke, TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {
+			Transparency = 1
+		}):Play()
+		
+		-- Скрытие меню: сжатие + сдвиг вниз + исчезновение (0.35s, Quint In)
+		local closeTween = TweenService:Create(menuFrame, TweenInfo.new(ANIM_TIME, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {
+			Size = UDim2.fromOffset(MENU_WIDTH, 0),
+			BackgroundTransparency = 1,
+			Position = UDim2.new(0.5, 0, 0.5, -20)
+		})
+		TweenService:Create(menuStroke, TweenInfo.new(ANIM_TIME, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {
+			Transparency = 1
+		}):Play()
+		
+		-- Убираем затемнение и размытие
+		TweenService:Create(darkOverlay, TweenInfo.new(ANIM_TIME, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {
+			BackgroundTransparency = 1
+		}):Play()
+		
+		TweenService:Create(menuBlur, TweenInfo.new(ANIM_TIME, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {
+			Size = 0
+		}):Play()
+		
+		closeTween.Completed:Connect(function()
+			if not menuOpen then
+				menuFrame.Visible = false
+				categoryBar.Visible = false
+				menuBlur.Enabled = false
+			end
+		end)
+		closeTween:Play()
+	end
+end
+
+-- Обработка нажатий клавиш
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then return end
+	if input.KeyCode == TOGGLE_KEY then
+		toggleMenu()
+	end
+end)
+
+-- Инициализация первой категории
+showCategory(1)
