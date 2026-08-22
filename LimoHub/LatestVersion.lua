@@ -1,1 +1,1 @@
-local latest = 1.1
+local latest = 1.2
