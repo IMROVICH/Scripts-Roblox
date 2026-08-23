@@ -17,7 +17,7 @@ task.wait(0.5)
 -- Звук через PlayerGui
 local PlayerGui = player:WaitForChild("PlayerGui")
 local sound = Instance.new("Sound")
-sound.SoundId = "rbxassetid://131661992591924" -- ID стандартного звука уведомления
+sound.SoundId = "rbxassetid://119708787414764" -- ID стандартного звука уведомления
 sound.Volume = 1.5
 sound.Name = "OutdateNotificationSound"
 sound.Parent = PlayerGui
